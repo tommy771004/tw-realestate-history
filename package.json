@@ -1,0 +1,12 @@
+{
+  "name": "tw-realestate-history",
+  "private": true,
+  "description": "內政部實價登錄開放資料的歷史分片（縣市 × 交易型態 × 交易年月），供 tw-realestate-price 前端讀取",
+  "scripts": {
+    "build": "tsx scripts/build-history.ts --out site --cache .cache --seasons all --current"
+  },
+  "dependencies": {
+    "papaparse": "5.5.3",
+    "tsx": "4.21.0"
+  }
+}

@@ -1,0 +1,70 @@
+name: Build history shards
+
+on:
+  # 每月 2 日 03:00 UTC（台灣 11:00），在內政部每月 1 日的發布之後
+  schedule:
+    - cron: "0 3 2 * *"
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: "要處理的季別（all、101S2-115S3 或 115S2,115S3）；已處理過的會略過"
+        default: "all"
+      force:
+        description: "重跑已處理過的季別（依編號去重，結果冪等）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-history
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # 取回目前已發布的分片，增量合併後再推回；保留 .git 讓推送時只傳變動的檔案
+      - name: Restore published shards
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}
+        run: |
+          if git ls-remote --exit-code --heads "$REPO_URL" gh-pages >/dev/null; then
+            git clone --depth 1 --branch gh-pages "$REPO_URL" site
+          else
+            mkdir site
+            git -C site init -b gh-pages
+            git -C site remote add origin "$REPO_URL"
+          fi
+
+      - name: Build
+        run: >
+          npx tsx scripts/build-history.ts
+          --out site
+          --cache "$RUNNER_TEMP/plvr"
+          --seasons "${{ inputs.seasons || 'all' }}"
+          --current
+          ${{ inputs.force && '--force' || '' }}
+
+      # 每次發布成單一 commit 並強制推送，避免 1.1 萬個月份檔的歷史讓 repo 越長越大
+      - name: Publish to gh-pages
+        working-directory: site
+        run: |
+          touch .nojekyll
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan publish
+          git add -A
+          git commit -q -m "Update shards $(date -u +%Y-%m-%d)"
+          git push --force origin publish:gh-pages
