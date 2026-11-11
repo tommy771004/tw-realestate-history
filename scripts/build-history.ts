@@ -6,6 +6,9 @@
  *   tsx scripts/build-history.ts --out <輸出資料夾> [--cache <zip 快取>] \
  *     [--seasons all | 101S2-115S3 | 115S2,115S3] [--current] [--cities a,f] [--force]
  *
+ *   tsx scripts/build-history.ts --check <已發布 manifest.json 的網址> [--current]
+ *     只判斷有沒有新資料（不下載季檔、不寫分片），結果寫入 $GITHUB_OUTPUT 的 changed=true|false
+ *
  * 輸出：
  *   manifest.json                       已處理的季檔／本期、各型態登記期間涵蓋範圍
  *   {city}/{tx}/index.json              { months: { "11509": 筆數, ... } }
@@ -64,7 +67,7 @@ const opt = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
-const OUT = path.resolve(opt("out") || "history-data");
+const OUT = path.resolve(opt("out") || "site");
 const CACHE = path.resolve(opt("cache") || path.join(tmpdir(), "plvr-cache"));
 const FORCE = flag("force");
 const CITY_FILTER = opt("cities")?.split(",").map((c) => c.trim().toLowerCase());
@@ -358,7 +361,58 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+// ---------------------------------------------------------------- 檢查模式
+
+/** 季檔是否已發布：只看 HEAD 的 Content-Type（未發布時回 200 + text/html） */
+async function isSeasonPublished(id: string): Promise<boolean> {
+  const res = await fetch(`${BASE}/DownloadSeason?season=${id}&type=zip&fileName=lvr_landcsv.zip`, {
+    method: "HEAD",
+    redirect: "follow",
+  });
+  return res.ok && !(res.headers.get("content-type") || "").includes("text/html");
+}
+
+/** 本期的期間說明（本期檔沒有 Last-Modified／ETag，只能下載 1–2 MB 的 zip 讀 build_time.xml） */
+async function currentLvrTime(): Promise<string> {
+  const zip = await fetchZip("current", "current");
+  if (!zip) throw new Error("本期檔下載失敗");
+  const dir = mkdtempSync(path.join(tmpdir(), "plvr-t-"));
+  try {
+    execFileSync("unzip", ["-o", "-q", zip, "build_time.xml", "-d", dir]);
+    return readLvrTime(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(zip, { force: true });
+  }
+}
+
+async function check(manifestUrl: string) {
+  const reasons: string[] = [];
+  const res = await fetch(manifestUrl);
+  if (res.status === 404) {
+    reasons.push("尚未發布過任何分片");
+  } else if (!res.ok) {
+    throw new Error(`讀取已發布的 manifest 失敗（HTTP ${res.status}）`);
+  } else {
+    const published = (await res.json()) as Manifest;
+    const pending = expandSeasons("all").filter((id) => !published.seasons[id]);
+    for (const id of pending) {
+      if (await isSeasonPublished(id)) reasons.push(`新季檔 ${id}`);
+    }
+    if (flag("current")) {
+      const lvrTime = await currentLvrTime();
+      if (!published.releases[lvrTime]) reasons.push(`新本期：${lvrTime}`);
+    }
+  }
+
+  const changed = reasons.length > 0;
+  console.log(changed ? `有新資料：\n- ${reasons.join("\n- ")}` : "沒有新資料，略過建置");
+  const out = process.env.GITHUB_OUTPUT;
+  if (out) writeFileSync(out, `changed=${changed}\n`, { flag: "a" });
+}
+
+const checkUrl = opt("check");
+(checkUrl ? check(checkUrl) : main()).catch((err) => {
   console.error(err);
   process.exit(1);
 });

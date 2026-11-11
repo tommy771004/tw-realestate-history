@@ -35,8 +35,19 @@ jobs:
 
       - run: npm ci
 
+      # 先用 HEAD 與 1–2 MB 的本期檔判斷有沒有新資料，沒有就不複製 500 MB 的分片、不重建
+      - name: Check for new data
+        id: check
+        if: ${{ !inputs.force }}
+        run: >
+          npx tsx scripts/build-history.ts
+          --check "https://raw.githubusercontent.com/${{ github.repository }}/gh-pages/manifest.json"
+          --current
+          --cache "$RUNNER_TEMP/plvr"
+
       # 取回目前已發布的分片，增量合併後再推回；保留 .git 讓推送時只傳變動的檔案
       - name: Restore published shards
+        if: ${{ inputs.force || steps.check.outputs.changed == 'true' }}
         env:
           REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}
         run: |
@@ -49,6 +60,7 @@ jobs:
           fi
 
       - name: Build
+        if: ${{ inputs.force || steps.check.outputs.changed == 'true' }}
         run: >
           npx tsx scripts/build-history.ts
           --out site
@@ -59,6 +71,7 @@ jobs:
 
       # 每次發布成單一 commit 並強制推送，避免 1.1 萬個月份檔的歷史讓 repo 越長越大
       - name: Publish to gh-pages
+        if: ${{ inputs.force || steps.check.outputs.changed == 'true' }}
         working-directory: site
         run: |
           touch .nojekyll
