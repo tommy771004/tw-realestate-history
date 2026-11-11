@@ -35,7 +35,7 @@ jobs:
 
       - run: npm ci
 
-      # 先用 HEAD 與 1–2 MB 的本期檔判斷有沒有新資料，沒有就不複製 500 MB 的分片、不重建
+      # 先用 HEAD 與本期的 build_time.xml 判斷有沒有新資料，沒有就不複製 500 MB 的分片、不重建
       - name: Check for new data
         id: check
         if: ${{ !inputs.force }}

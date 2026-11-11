@@ -372,18 +372,14 @@ async function isSeasonPublished(id: string): Promise<boolean> {
   return res.ok && !(res.headers.get("content-type") || "").includes("text/html");
 }
 
-/** 本期的期間說明（本期檔沒有 Last-Modified／ETag，只能下載 1–2 MB 的 zip 讀 build_time.xml） */
+/** 本期的期間說明：直接讀 build_time.xml（幾百位元組），不必下載本期 zip */
 async function currentLvrTime(): Promise<string> {
-  const zip = await fetchZip("current", "current");
-  if (!zip) throw new Error("本期檔下載失敗");
-  const dir = mkdtempSync(path.join(tmpdir(), "plvr-t-"));
-  try {
-    execFileSync("unzip", ["-o", "-q", zip, "build_time.xml", "-d", dir]);
-    return readLvrTime(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-    rmSync(zip, { force: true });
-  }
+  const res = await fetch(`${BASE}/Download?fileName=build_time.xml`);
+  if (!res.ok) throw new Error(`本期期間說明下載失敗（HTTP ${res.status}）`);
+  const text = await res.text();
+  const m = text.match(/<lvr_time>([\s\S]*?)<\/lvr_time>/);
+  if (!m) throw new Error("本期期間說明格式不符");
+  return m[1].trim();
 }
 
 async function check(manifestUrl: string) {
